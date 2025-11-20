@@ -5,27 +5,28 @@ from grove.grove_ultrasonic_ranger import GroveUltrasonicRanger
 from grove.display.jhd1802 import JHD1802
 
 # === Configuracin de pines ===
-button = GPIO(5, GPIO.IN)            # Botn en D5 ? GPIO5
-ultrasonic = GroveUltrasonicRanger(18)  # Sensor ultrasnico en D18 ? GPIO24
+button = GPIO(5, GPIO.IN)              # Botn en D5
+ultrasonic = GroveUltrasonicRanger(18) # Sensor ultrasnico en D18
 lcd = JHD1802()                        # LCD 16x2 White on Blue
 
-# Funcin para calcular porcentaje de llenado
+# === Funcin para calcular porcentaje ===
+# 0 cm = 100%
+# 25 cm = 0%
 def calcular_porcentaje(distancia):
-    if 0 < distancia <= 3:
-        return 100
-    elif 3 < distancia <= 20:
-        return 70
-    elif 22 < distancia <= 25:
-        return 30
-    else:
-        return 0
+    distancia_max = 25
+    porcentaje = 100 - (distancia / distancia_max) * 100
+
+    # Limitar entre 0% y 100%
+    porcentaje = max(0, min(100, porcentaje))
+
+    return int(porcentaje)
 
 # Limpia pantalla al inicio
 lcd.clear()
 lcd.setCursor(0,0)
 lcd.write("Sistema iniciado")
 
-print("Sistema iniciado. Mantn presionado el botn para medir...")
+print("Sistema iniciado. Manten presionado el boton para medir...")
 
 while True:
     try:
@@ -34,10 +35,7 @@ while True:
             porcentaje = calcular_porcentaje(distancia)
 
             # Consola
-            if porcentaje == 100:
-                print(f"??? Basura llena ({porcentaje}%) | Distancia: {distancia:.1f} cm", end="\r")
-            else:
-                print(f"Distancia: {distancia:.1f} cm | Llenado: {porcentaje}%", end="\r")
+            print(f"Distancia: {distancia:.1f} cm | Llenado: {porcentaje}%", end="\r")
 
             # LCD
             lcd.setCursor(0,0)
@@ -47,10 +45,10 @@ while True:
 
         else:
             lcd.setCursor(0,0)
-            lcd.write("Esperando boton  ")
+            lcd.write("Esperando boton ")
             lcd.setCursor(1,0)
             lcd.write("                  ")
-            print("Botn no presionado. Esperando...", end="\r")
+            print("Boton no presionado. Esperando...", end="\r")
 
         time.sleep(0.2)
 
