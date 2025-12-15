@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Papelera Inteligente</title>
+
+    <!-- React -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- SQLite -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+/* ================= ICONOS ================= */
+const Icons = {
+    Trash2: () => <span>🗑️</span>,
+    Users: () => <span>👥</span>,
+    TrendingUp: () => <span>📈</span>,
+    Database: () => <span>🗄️</span>,
+    Play: () => <span>▶️</span>,
+    Refresh: () => <span>🔄</span>,
+    Error: () => <span>❌</span>
+};
+
+/* ================= APP ================= */
+const SmartBinDashboard = () => {
+    const [usuarios, setUsuarios] = useState([]);
+    const [depositos, setDepositos] = useState([]);
+    const [estadisticas, setEstadisticas] = useState([]);
+    const [binLevel, setBinLevel] = useState(0);
+    const [logs, setLogs] = useState([]);
+    const [loading, setLoading] = useState(false);
+
+    const addLog = msg => {
+        const time = new Date().toLocaleString('es-ES');
+        setLogs(prev => [...prev, `[${time}] ${msg}`]);
+    };
+
+    /* ============ CARGAR BD ============ */
+    const loadDatabaseFromFile = async (file) => {
+        setLoading(true);
+        addLog("Cargando base de datos...");
+
+        try {
+            const buffer = await file.arrayBuffer();
+            const SQL = await initSqlJs({
+                locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+            });
+
+            const db = new SQL.Database(new Uint8Array(buffer));
+            processDatabase(db);
+            addLog("✓ Base de datos importada correctamente");
+
+        } catch (e) {
+            console.error(e);
+            addLog("❌ Error al cargar la base de datos");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    /* ============ PROCESAR BD ============ */
+    const processDatabase = (db) => {
+        /* ---- USUARIOS ---- */
+        try {
+            const res = db.exec("SELECT * FROM usuarios");
+            const users = res[0].values.map(r => ({
+                uid: r[0],
+                nombre: r[1],
+                fecha_registro: r[2]
+            }));
+            setUsuarios(users);
+            addLog(`✓ ${users.length} usuarios cargados`);
+        } catch {
+            addLog("⚠ Tabla usuarios no encontrada");
+        }
+
+        /* ---- DEPOSITOS ---- */
+        try {
+            const res = db.exec("SELECT * FROM depositos");
+            const deps = res[0].values.map(r => ({
+                id: r[0],
+                uid: r[1],
+                porcentaje: r[2],
+                kg: r[3],
+                nivel: r[4],
+                fecha: r[5]
+            }));
+            setDepositos(deps);
+            addLog(`✓ ${deps.length} depósitos cargados`);
+
+            if (deps.length > 0) {
+                setBinLevel(deps[deps.length - 1].nivel);
+            }
+        } catch {
+            addLog("⚠ Tabla depositos no encontrada");
+        }
+
+        /* ---- ESTADISTICAS ---- */
+        try {
+            const res = db.exec("SELECT * FROM estadisticas");
+            const stats = res[0].values.map(r => ({
+                uid: r[0],
+                depositos: r[1],
+                kg: r[2],
+                fecha: r[3]
+            }));
+            setEstadisticas(stats);
+            addLog("✓ Estadísticas cargadas");
+        } catch {
+            addLog("⚠ Tabla estadisticas no encontrada");
+        }
+    };
+
+    const openFile = () => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".db,.sqlite,.sqlite3";
+        input.onchange = e => loadDatabaseFromFile(e.target.files[0]);
+        input.click();
+    };
+
+    /* ============ TOTALES ============ */
+    const totalKg = estadisticas.reduce((s, e) => s + e.kg, 0);
+    const totalDepositos = estadisticas.reduce((s, e) => s + e.depositos, 0);
+
+    return (
+        <div className="min-h-screen bg-gray-100 p-6">
+            <h1 className="text-3xl font-bold mb-4">♻️ Papelera Inteligente</h1>
+
+            <button
+                onClick={openFile}
+                disabled={loading}
+                className="bg-blue-600 text-white px-4 py-2 rounded mb-4"
+            >
+                {loading ? "Cargando..." : "Cargar Base de Datos"}
+            </button>
+
+            {/* LOG */}
+            <div className="bg-black text-green-400 p-3 rounded mb-4 text-sm max-h-40 overflow-y-auto">
+                {logs.map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+
+            {/* RESUMEN */}
+            <div className="grid grid-cols-4 gap-4 mb-6">
+                <div className="bg-white p-4 rounded shadow">Nivel: <b>{binLevel}%</b></div>
+                <div className="bg-white p-4 rounded shadow">Usuarios: <b>{usuarios.length}</b></div>
+                <div className="bg-white p-4 rounded shadow">Depósitos: <b>{totalDepositos}</b></div>
+                <div className="bg-white p-4 rounded shadow">Kg: <b>{totalKg.toFixed(2)}</b></div>
+            </div>
+
+            {/* USUARIOS */}
+            <div className="bg-white p-4 rounded shadow mb-6">
+                <h2 className="font-bold mb-2">Usuarios</h2>
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr><th>UID</th><th>Nombre</th></tr>
+                    </thead>
+                    <tbody>
+                        {usuarios.map(u => (
+                            <tr key={u.uid}>
+                                <td>{u.uid}</td>
+                                <td>{u.nombre}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* DEPOSITOS */}
+            <div className="bg-white p-4 rounded shadow">
+                <h2 className="font-bold mb-2">Últimos depósitos</h2>
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr>
+                            <th>UID</th>
+                            <th>Kg</th>
+                            <th>Nivel</th>
+                            <th>Fecha</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {depositos.slice(-10).reverse().map(d => (
+                            <tr key={d.id}>
+                                <td>{d.uid}</td>
+                                <td>{d.kg}</td>
+                                <td>{d.nivel}%</td>
+                                <td>{new Date(d.fecha).toLocaleString('es-ES')}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<SmartBinDashboard />);
+</script>
+</body>
+</html>
