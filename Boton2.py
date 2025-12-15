@@ -6,16 +6,25 @@ Sistema de Papelera Inteligente
 - Tarjeta debe mantenerse 5 segundos para registrar
 """
 
+import math
 import time
+import sqlite3
+
+import requests
 from smbus2 import SMBus
 from grove.gpio import GPIO
 from grove.grove_ultrasonic_ranger import GroveUltrasonicRanger
 from grove.display.jhd1802 import JHD1802
 
-# ============== CONFIGURACIN ==============
-DISTANCIA_VACIA = 12  # cm cuando est vaca
-DISTANCIA_LLENA = 0   # cm cuando est llena
+# ============== CONFIGURACION ==============
+DISTANCIA_VACIA = 12  # cm cuando esta vacia
+DISTANCIA_LLENA = 0   # cm cuando esta llena
 TIEMPO_CONFIRMACION = 5  # segundos que debe estar la tarjeta
+
+# Coordenadas aproximadas de la papelera
+# Ejemplo: centro de Madrid
+LAT_PAPELERA = 40.4168
+LON_PAPELERA = -3.7038
 
 # ============== CLASE RFID ==============
 class WS1850S:
@@ -91,12 +100,167 @@ class SistemaPapelera:
         self.ultima_lectura_exitosa = 0  # Timestamp ltima lectura RFID
         self.timeout_perdida = 1.5  # Segundos sin lectura para considerar retirada
         self.usuarios = {}  # {uid: {'nombre': str, 'depositos': int, 'kg_total': float}}
+
+        # Base de datos local para información de reciclaje
+        self.conn = None
+        self.cur = None
+        self.init_db()
+        self.actualizar_puntos_reciclaje()
+        self.mostrar_punto_reciclaje_mas_cercano()
         
         # Inicializar
         self.rfid.init()
         self.lcd.clear()
         self.mostrar_lcd("Sistema listo", "Presiona boton")
-    
+
+    # ============== BASE DE DATOS + API RECICLAJE ==============
+    def init_db(self):
+        """
+        Crea (si no existe) una BD SQLite local con puntos de reciclaje.
+
+        Para el ejemplo, se usa la API abierta de Puntos Limpios del
+        Ayuntamiento de Madrid (servicio de reciclaje):
+        https://datos.madrid.es/egob/catalogo/212625-0-puntos-limpios.json
+        """
+        try:
+            self.conn = sqlite3.connect("reciclaje.db")
+            self.cur = self.conn.cursor()
+            self.cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS puntos_reciclaje (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT,
+                    direccion TEXT,
+                    municipio TEXT,
+                    lat REAL,
+                    lon REAL
+                )
+                """
+            )
+            self.conn.commit()
+            print("\n? BD 'reciclaje.db' lista.")
+        except Exception as e:
+            print(f"\n!! Error inicializando BD de reciclaje: {e}")
+
+    def actualizar_puntos_reciclaje(self):
+        """
+        Descarga puntos de reciclaje desde una API pública y los guarda en la BD.
+
+        API usada (reciclaje / puntos limpios):
+        https://datos.madrid.es/egob/catalogo/212625-0-puntos-limpios.json
+        """
+        if self.conn is None or self.cur is None:
+            return
+
+        url = "https://datos.madrid.es/egob/catalogo/212625-0-puntos-limpios.json"
+        print("\n? Actualizando puntos de reciclaje desde API publica...")
+
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+
+            puntos = data.get("@graph", [])
+            if not puntos:
+                print("!! La API no devolvio puntos de reciclaje (@graph vacio).")
+                return
+
+            # Limpiamos la tabla antes de insertar
+            self.cur.execute("DELETE FROM puntos_reciclaje")
+
+            insert_sql = """
+                INSERT INTO puntos_reciclaje (nombre, direccion, municipio, lat, lon)
+                VALUES (?, ?, ?, ?, ?)
+            """
+
+            for p in puntos:
+                nombre = p.get("title", "Punto reciclaje")
+
+                address = p.get("address", {}) or {}
+                direccion = address.get("street-address", "")
+                municipio = address.get("locality", "")
+
+                coord = p.get("location", {}) or {}
+                lat = None
+                lon = None
+                try:
+                    lat = float(coord.get("latitude")) if coord.get("latitude") is not None else None
+                    lon = float(coord.get("longitude")) if coord.get("longitude") is not None else None
+                except (TypeError, ValueError):
+                    lat, lon = None, None
+
+                self.cur.execute(
+                    insert_sql,
+                    (nombre, direccion, municipio, lat, lon),
+                )
+
+            self.conn.commit()
+            total = self.cur.execute("SELECT COUNT(*) FROM puntos_reciclaje").fetchone()[0]
+            print(f"? Puntos de reciclaje guardados en BD: {total}")
+        except Exception as e:
+            print(f"!! Error actualizando puntos de reciclaje desde API: {e}")
+
+    def _distancia_km(self, lat1, lon1, lat2, lon2):
+        """Calcula la distancia en km entre dos puntos usando la fórmula de Haversine."""
+        if None in (lat1, lon1, lat2, lon2):
+            return None
+
+        R = 6371.0  # Radio medio de la Tierra en km
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return R * c
+
+    def mostrar_punto_reciclaje_mas_cercano(self):
+        """
+        Busca en la BD el punto de reciclaje más cercano a la papelera
+        y lo muestra por consola.
+        """
+        if self.conn is None or self.cur is None:
+            print("!! BD de reciclaje no inicializada.")
+            return
+
+        try:
+            self.cur.execute(
+                "SELECT nombre, direccion, municipio, lat, lon FROM puntos_reciclaje"
+            )
+            filas = self.cur.fetchall()
+            if not filas:
+                print("!! No hay puntos de reciclaje en la BD.")
+                return
+
+            mejor = None
+            mejor_dist = None
+
+            for nombre, direccion, municipio, lat, lon in filas:
+                d = self._distancia_km(LAT_PAPELERA, LON_PAPELERA, lat, lon)
+                if d is None:
+                    continue
+                if mejor_dist is None or d < mejor_dist:
+                    mejor_dist = d
+                    mejor = (nombre, direccion, municipio, lat, lon)
+
+            if mejor is None:
+                print("!! No se pudo calcular la distancia a ningún punto de reciclaje.")
+                return
+
+            nombre, direccion, municipio, lat, lon = mejor
+            print("\n" + "=" * 50)
+            print("PUNTO DE RECICLAJE MÁS CERCANO")
+            print("=" * 50)
+            print(f"Nombre    : {nombre}")
+            print(f"Dirección : {direccion}")
+            print(f"Municipio : {municipio}")
+            print(f"Lat, Lon  : {lat}, {lon}")
+            print(f"Distancia : {mejor_dist:.2f} km desde la papelera aprox.")
+            print("=" * 50 + "\n")
+        except Exception as e:
+            print(f"!! Error calculando punto de reciclaje más cercano: {e}")
+
     def calcular_porcentaje(self, distancia):
         """Calcula % de llenado (0cm=100%, 12cm=0%)"""
         porcentaje = 100 - (distancia / DISTANCIA_VACIA) * 100
@@ -264,6 +428,8 @@ class SistemaPapelera:
             self.mostrar_estadisticas()
             self.lcd.clear()
             self.mostrar_lcd("Sistema", "detenido")
+            if self.conn:
+                self.conn.close()
             self.rfid.close()
             print("\n? Sistema cerrado correctamente\n")
 
