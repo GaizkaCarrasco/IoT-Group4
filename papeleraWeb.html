@@ -41,18 +41,71 @@ const SmartBinDashboard = () => {
     const [depositos, setDepositos] = useState([]);
     const [estadisticas, setEstadisticas] = useState([]);
     const [binLevel, setBinLevel] = useState(0);
+    const [puntosReciclaje, setPuntosReciclaje] = useState([]);
+    const [puntoCercano, setPuntoCercano] = useState(null);
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [apiUrl, setApiUrl] = useState('http://localhost:5000');
 
     const addLog = msg => {
         const time = new Date().toLocaleString('es-ES');
         setLogs(prev => [...prev, `[${time}] ${msg}`]);
     };
 
-    /* ============ CARGAR BD ============ */
+    /* ============ CARGAR DESDE API ============ */
+    const loadFromAPI = async () => {
+        setLoading(true);
+        addLog("Conectando con API...");
+
+        try {
+            // Cargar resumen completo
+            const resumenRes = await fetch(`${apiUrl}/api/resumen`);
+            if (!resumenRes.ok) throw new Error("Error al conectar con la API");
+            const resumen = await resumenRes.json();
+            
+            setBinLevel(resumen.nivel_actual || 0);
+            setPuntoCercano(resumen.punto_reciclaje_cercano);
+            addLog("✓ Resumen cargado");
+
+            // Cargar usuarios
+            const usuariosRes = await fetch(`${apiUrl}/api/usuarios`);
+            const usuariosData = await usuariosRes.json();
+            setUsuarios(usuariosData.usuarios || []);
+            addLog(`✓ ${usuariosData.usuarios?.length || 0} usuarios cargados`);
+
+            // Cargar depositos
+            const depositosRes = await fetch(`${apiUrl}/api/depositos?limit=50`);
+            const depositosData = await depositosRes.json();
+            setDepositos(depositosData.depositos || []);
+            addLog(`✓ ${depositosData.depositos?.length || 0} depósitos cargados`);
+
+            // Cargar estadisticas
+            const statsRes = await fetch(`${apiUrl}/api/estadisticas`);
+            const statsData = await statsRes.json();
+            setEstadisticas(statsData.estadisticas || []);
+            addLog("✓ Estadísticas cargadas");
+
+            // Cargar puntos de reciclaje
+            const puntosRes = await fetch(`${apiUrl}/api/puntos-reciclaje?limit=5`);
+            const puntosData = await puntosRes.json();
+            setPuntosReciclaje(puntosData.puntos || []);
+            addLog(`✓ ${puntosData.puntos?.length || 0} puntos de reciclaje cargados`);
+
+            addLog("✓ Datos cargados correctamente desde la API");
+
+        } catch (e) {
+            console.error(e);
+            addLog(`❌ Error al cargar desde API: ${e.message}`);
+            addLog("⚠ Verifica que el servidor API esté ejecutándose en " + apiUrl);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    /* ============ CARGAR BD LOCAL (FALLBACK) ============ */
     const loadDatabaseFromFile = async (file) => {
         setLoading(true);
-        addLog("Cargando base de datos...");
+        addLog("Cargando base de datos local...");
 
         try {
             const buffer = await file.arrayBuffer();
@@ -72,7 +125,7 @@ const SmartBinDashboard = () => {
         }
     };
 
-    /* ============ PROCESAR BD ============ */
+    /* ============ PROCESAR BD LOCAL ============ */
     const processDatabase = (db) => {
         /* ---- USUARIOS ---- */
         try {
@@ -133,21 +186,43 @@ const SmartBinDashboard = () => {
         input.click();
     };
 
+    /* ============ CARGAR AL INICIAR ============ */
+    useEffect(() => {
+        loadFromAPI();
+    }, [apiUrl]);
+
     /* ============ TOTALES ============ */
-    const totalKg = estadisticas.reduce((s, e) => s + e.kg, 0);
-    const totalDepositos = estadisticas.reduce((s, e) => s + e.depositos, 0);
+    const totalKg = estadisticas.reduce((s, e) => s + (e.kg_total || 0), 0);
+    const totalDepositos = estadisticas.reduce((s, e) => s + (e.total_depositos || 0), 0);
 
     return (
         <div className="min-h-screen bg-gray-100 p-6">
             <h1 className="text-3xl font-bold mb-4">♻️ Papelera Inteligente</h1>
 
-            <button
-                onClick={openFile}
-                disabled={loading}
-                className="bg-blue-600 text-white px-4 py-2 rounded mb-4"
-            >
-                {loading ? "Cargando..." : "Cargar Base de Datos"}
-            </button>
+            <div className="mb-4 flex gap-2 flex-wrap">
+                <button
+                    onClick={loadFromAPI}
+                    disabled={loading}
+                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                >
+                    {loading ? "Cargando..." : "🔄 Actualizar desde API"}
+                </button>
+                <button
+                    onClick={openFile}
+                    disabled={loading}
+                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                    📁 Cargar BD Local
+                </button>
+                <input
+                    type="text"
+                    value={apiUrl}
+                    onChange={e => setApiUrl(e.target.value)}
+                    placeholder="URL de la API"
+                    className="border px-3 py-2 rounded"
+                    style={{minWidth: '200px'}}
+                />
+            </div>
 
             {/* LOG */}
             <div className="bg-black text-green-400 p-3 rounded mb-4 text-sm max-h-40 overflow-y-auto">
@@ -181,22 +256,22 @@ const SmartBinDashboard = () => {
             </div>
 
             {/* DEPOSITOS */}
-            <div className="bg-white p-4 rounded shadow">
+            <div className="bg-white p-4 rounded shadow mb-6">
                 <h2 className="font-bold mb-2">Últimos depósitos</h2>
                 <table className="w-full text-sm">
                     <thead>
                         <tr>
-                            <th>UID</th>
+                            <th>Usuario</th>
                             <th>Kg</th>
                             <th>Nivel</th>
                             <th>Fecha</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {depositos.slice(-10).reverse().map(d => (
+                        {depositos.slice(0, 10).map(d => (
                             <tr key={d.id}>
-                                <td>{d.uid}</td>
-                                <td>{d.kg}</td>
+                                <td>{d.nombre || d.uid}</td>
+                                <td>{d.kg?.toFixed(2) || d.kg}</td>
                                 <td>{d.nivel}%</td>
                                 <td>{new Date(d.fecha).toLocaleString('es-ES')}</td>
                             </tr>
@@ -204,6 +279,44 @@ const SmartBinDashboard = () => {
                     </tbody>
                 </table>
             </div>
+
+            {/* PUNTO DE RECICLAJE MAS CERCANO */}
+            {puntoCercano && (
+                <div className="bg-green-50 border-2 border-green-500 p-4 rounded shadow mb-6">
+                    <h2 className="font-bold mb-2 text-green-800">📍 Punto de Reciclaje Más Cercano</h2>
+                    <div className="text-sm">
+                        <p><strong>Nombre:</strong> {puntoCercano.nombre}</p>
+                        <p><strong>Dirección:</strong> {puntoCercano.direccion}</p>
+                        <p><strong>Municipio:</strong> {puntoCercano.municipio}</p>
+                        <p><strong>Distancia:</strong> {puntoCercano.distancia_km} km</p>
+                    </div>
+                </div>
+            )}
+
+            {/* PUNTOS DE RECICLAJE */}
+            {puntosReciclaje.length > 0 && (
+                <div className="bg-white p-4 rounded shadow">
+                    <h2 className="font-bold mb-2">🗺️ Puntos de Reciclaje Cercanos</h2>
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Dirección</th>
+                                <th>Distancia</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {puntosReciclaje.map((p, i) => (
+                                <tr key={i}>
+                                    <td>{p.nombre}</td>
+                                    <td>{p.direccion}</td>
+                                    <td>{p.distancia_km} km</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 };

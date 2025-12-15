@@ -161,6 +161,167 @@ class DatabaseManager:
             self.conn.close()
             print("? Base de datos cerrada")
     
+    # ============== PUNTOS DE RECICLAJE ==============
+    def inicializar_reciclaje_db(self):
+        """Crear tabla de puntos de reciclaje si no existe"""
+        try:
+            conn_reciclaje = sqlite3.connect(RECICLAJE_DB_FILE)
+            cursor = conn_reciclaje.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS puntos_reciclaje (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT,
+                    direccion TEXT,
+                    municipio TEXT,
+                    lat REAL,
+                    lon REAL
+                )
+            ''')
+            conn_reciclaje.commit()
+            conn_reciclaje.close()
+            print(f"? Base de datos de reciclaje iniciada: {RECICLAJE_DB_FILE}")
+        except Exception as e:
+            print(f"!! Error inicializando BD de reciclaje: {e}")
+    
+    def actualizar_puntos_reciclaje(self):
+        """
+        Descarga puntos de reciclaje desde una API pública y los guarda en la BD.
+        API usada (reciclaje / puntos limpios):
+        https://datos.madrid.es/egob/catalogo/212625-0-puntos-limpios.json
+        """
+        try:
+            conn_reciclaje = sqlite3.connect(RECICLAJE_DB_FILE)
+            cursor = conn_reciclaje.cursor()
+            
+            url = "https://datos.madrid.es/egob/catalogo/212625-0-puntos-limpios.json"
+            print("\n? Actualizando puntos de reciclaje desde API publica...")
+            
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            puntos = data.get("@graph", [])
+            if not puntos:
+                print("!! La API no devolvio puntos de reciclaje (@graph vacio).")
+                conn_reciclaje.close()
+                return
+            
+            # Limpiamos la tabla antes de insertar
+            cursor.execute("DELETE FROM puntos_reciclaje")
+            
+            insert_sql = """
+                INSERT INTO puntos_reciclaje (nombre, direccion, municipio, lat, lon)
+                VALUES (?, ?, ?, ?, ?)
+            """
+            
+            for p in puntos:
+                nombre = p.get("title", "Punto reciclaje")
+                address = p.get("address", {}) or {}
+                direccion = address.get("street-address", "")
+                municipio = address.get("locality", "")
+                
+                coord = p.get("location", {}) or {}
+                lat = None
+                lon = None
+                try:
+                    lat = float(coord.get("latitude")) if coord.get("latitude") is not None else None
+                    lon = float(coord.get("longitude")) if coord.get("longitude") is not None else None
+                except (TypeError, ValueError):
+                    lat, lon = None, None
+                
+                cursor.execute(insert_sql, (nombre, direccion, municipio, lat, lon))
+            
+            conn_reciclaje.commit()
+            total = cursor.execute("SELECT COUNT(*) FROM puntos_reciclaje").fetchone()[0]
+            print(f"? Puntos de reciclaje guardados en BD: {total}")
+            conn_reciclaje.close()
+        except Exception as e:
+            print(f"!! Error actualizando puntos de reciclaje desde API: {e}")
+    
+    def _distancia_km(self, lat1, lon1, lat2, lon2):
+        """Calcula la distancia en km entre dos puntos usando la formula de Haversine."""
+        if None in (lat1, lon1, lat2, lon2):
+            return None
+        
+        R = 6371.0  # Radio medio de la Tierra en km
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return R * c
+    
+    def obtener_punto_reciclaje_mas_cercano(self):
+        """
+        Busca en la BD el punto de reciclaje mas cercano a la papelera.
+        Retorna un diccionario con la información o None.
+        """
+        try:
+            conn_reciclaje = sqlite3.connect(RECICLAJE_DB_FILE)
+            cursor = conn_reciclaje.cursor()
+            
+            cursor.execute("SELECT nombre, direccion, municipio, lat, lon FROM puntos_reciclaje")
+            filas = cursor.fetchall()
+            conn_reciclaje.close()
+            
+            if not filas:
+                return None
+            
+            mejor = None
+            mejor_dist = None
+            
+            for nombre, direccion, municipio, lat, lon in filas:
+                d = self._distancia_km(LAT_PAPELERA, LON_PAPELERA, lat, lon)
+                if d is None:
+                    continue
+                if mejor_dist is None or d < mejor_dist:
+                    mejor_dist = d
+                    mejor = {
+                        'nombre': nombre,
+                        'direccion': direccion,
+                        'municipio': municipio,
+                        'lat': lat,
+                        'lon': lon,
+                        'distancia_km': mejor_dist
+                    }
+            
+            return mejor
+        except Exception as e:
+            print(f"!! Error obteniendo punto de reciclaje mas cercano: {e}")
+            return None
+    
+    def obtener_todos_puntos_reciclaje(self, limit=10):
+        """Obtiene todos los puntos de reciclaje ordenados por distancia"""
+        try:
+            conn_reciclaje = sqlite3.connect(RECICLAJE_DB_FILE)
+            cursor = conn_reciclaje.cursor()
+            
+            cursor.execute("SELECT nombre, direccion, municipio, lat, lon FROM puntos_reciclaje")
+            filas = cursor.fetchall()
+            conn_reciclaje.close()
+            
+            puntos_con_distancia = []
+            for nombre, direccion, municipio, lat, lon in filas:
+                d = self._distancia_km(LAT_PAPELERA, LON_PAPELERA, lat, lon)
+                if d is not None:
+                    puntos_con_distancia.append({
+                        'nombre': nombre,
+                        'direccion': direccion,
+                        'municipio': municipio,
+                        'lat': lat,
+                        'lon': lon,
+                        'distancia_km': d
+                    })
+            
+            # Ordenar por distancia
+            puntos_con_distancia.sort(key=lambda x: x['distancia_km'])
+            return puntos_con_distancia[:limit]
+        except Exception as e:
+            print(f"!! Error obteniendo puntos de reciclaje: {e}")
+            return []
+    
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -170,7 +331,9 @@ Sistema de Papelera Inteligente
 """
 
 import time
+import math
 import sqlite3
+import requests
 from datetime import datetime
 from smbus2 import SMBus
 from grove.gpio import GPIO
@@ -182,6 +345,12 @@ DISTANCIA_VACIA = 12  # cm cuando est vaca
 DISTANCIA_LLENA = 0   # cm cuando est llena
 TIEMPO_CONFIRMACION = 5  # segundos que debe estar la tarjeta
 DB_FILE = "papelera_inteligente.db"  # Base de datos SQLite
+RECICLAJE_DB_FILE = "reciclaje.db"  # Base de datos para puntos de reciclaje
+
+# Coordenadas aproximadas de la papelera
+# Ejemplo: centro de Madrid
+LAT_PAPELERA = 40.4168
+LON_PAPELERA = -3.7038
 
 # ============== CLASE RFID ==============
 class WS1850S:
@@ -253,6 +422,22 @@ class SistemaPapelera:
         
         # Base de datos
         self.db = DatabaseManager(DB_FILE)
+        
+        # Inicializar base de datos de reciclaje
+        self.db.inicializar_reciclaje_db()
+        self.db.actualizar_puntos_reciclaje()
+        
+        # Mostrar punto mas cercano al inicio
+        punto_cercano = self.db.obtener_punto_reciclaje_mas_cercano()
+        if punto_cercano:
+            print("\n" + "=" * 50)
+            print("PUNTO DE RECICLAJE MAS CERCANO")
+            print("=" * 50)
+            print(f"Nombre    : {punto_cercano['nombre']}")
+            print(f"Dirección : {punto_cercano['direccion']}")
+            print(f"Municipio : {punto_cercano['municipio']}")
+            print(f"Distancia : {punto_cercano['distancia_km']:.2f} km")
+            print("=" * 50 + "\n")
         
         # Estado
         self.tarjeta_actual = None
