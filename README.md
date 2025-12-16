@@ -4,21 +4,93 @@ Sistema completo de papelera inteligente con RFID, base de datos SQLite, API RES
 
 ## Características
 
-- ✅ Lectura de tarjetas RFID para identificación de usuarios
-- ✅ Medición de nivel de llenado con sensor ultrasónico
-- ✅ Base de datos SQLite para usuarios, depósitos y estadísticas
-- ✅ Integración con API de puntos de reciclaje de Madrid
-- ✅ API REST con Flask para acceso a los datos
-- ✅ Panel web interactivo con React
-- ✅ Visualización de puntos de reciclaje más cercanos
+- Lectura de tarjetas RFID para identificación de usuarios
+- Medición de nivel de llenado con sensor ultrasónico
+- Base de datos SQLite para usuarios, depósitos y estadísticas
+- Integración con API de puntos de reciclaje de Madrid
+- API REST con Flask para acceso a los datos
+- Panel web interactivo con React
+- Visualización de puntos de reciclaje más cercanos
 
-## Estructura del Proyecto
+## Hardware y Sensores
+
+### Sensores Incorporados
+
+1. **Lector RFID/NFC WS1850S**
+   - Protocolo: I2C (dirección 0x28)
+   - Función: Identificación de usuarios mediante tarjetas RFID
+   - Conexión: Bus I2C (SDA/SCL)
+
+2. **Sensor Ultrasónico Grove Ultrasonic Ranger**
+   - Tipo: Sensor de distancia por ultrasonidos
+   - Rango: 0-12 cm (configurable)
+   - Función: Medición del nivel de llenado de la papelera
+   - Conexión: Pin digital GPIO 18 (D18)
+
+3. **Botón GPIO**
+   - Tipo: Botón digital
+   - Función: Activación del sistema (debe estar presionado para funcionar)
+   - Conexión: Pin digital GPIO 5 (D5)
+
+4. **Pantalla LCD JHD1802**
+   - Tipo: Display LCD 16x2 caracteres
+   - Función: Visualización de información al usuario
+   - Conexión: I2C (mismo bus que RFID)
+
+### Conexiones del Hardware
+
+```
+Raspberry Pi / Grove Base Hat
+├── I2C Bus
+│   ├── WS1850S RFID Reader (0x28)
+│   └── JHD1802 LCD Display
+├── GPIO 5 (D5) → Botón
+└── GPIO 18 (D18) → Sensor Ultrasónico
+```
+
+### Especificaciones Técnicas
+
+- **Plataforma**: Raspberry Pi con Grove Base Hat
+- **Comunicación**: I2C para RFID y LCD, GPIO para botón y sensor ultrasónico
+- **Base de datos**: SQLite (archivos locales)
+- **API Externa**: API de puntos limpios de Madrid (requiere internet)
+
+## Estructura del Código
+
+### Arquitectura del Sistema
+
+El proyecto está estructurado en tres componentes principales:
+
+1. **Sistema Principal (`PapeleraInteligente.py`)**
+   - Clase `WS1850S`: Manejo del lector RFID/NFC
+   - Clase `DatabaseManager`: Gestión de base de datos SQLite
+   - Clase `SistemaPapelera`: Lógica principal del sistema
+     - Inicialización de hardware
+     - Bucle principal de lectura de sensores
+     - Registro de depósitos
+     - Cálculo de estadísticas
+
+2. **API REST (`papelera_api.py`)**
+   - Servidor Flask con endpoints para:
+     - Consulta de usuarios y depósitos
+     - Estadísticas en tiempo real
+     - Información de puntos de reciclaje
+   - CORS habilitado para acceso web
+
+3. **Panel Web (`papeleraWeb.html`)**
+   - Interfaz React con Tailwind CSS
+   - Visualización de datos en tiempo real
+   - Carga de datos desde API o archivos SQLite locales
+
+### Archivos del Proyecto
 
 - `PapeleraInteligente.py` - Sistema principal de la papelera (hardware + BD)
 - `papelera_api.py` - Servidor Flask API REST
 - `papeleraWeb.html` - Panel web con React
+- `LectorNFC.py` - Código de referencia para lectura RFID
 - `Boton2.py` - Código original con API de reciclaje (referencia)
 - `requirements.txt` - Dependencias de Python
+- `sync_sqlite.ps1` - Script de sincronización (PowerShell)
 
 ## Instalación
 
