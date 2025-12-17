@@ -4,38 +4,44 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema de Papelera Inteligente</title>
-
-    <!-- React -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- SQLite -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
 </head>
 <body>
 <div id="root"></div>
-
 <script type="text/babel">
+// ---------------------------
+// Smart Bin Dashboard (React)
+// ---------------------------
+
 const { useState, useEffect } = React;
 
-/* ================= ICONOS ================= */
-const Icons = {
-    Trash2: () => <span>🗑️</span>,
-    Users: () => <span>👥</span>,
-    TrendingUp: () => <span>📈</span>,
-    Database: () => <span>🗄️</span>,
-    Play: () => <span>▶️</span>,
-    Refresh: () => <span>🔄</span>,
-    Error: () => <span>❌</span>
-};
+// Coordenadas de la papelera (ejemplo: Pamplona)
+const LAT_PAPELERA = 42.8125;
+const LON_PAPELERA = -1.6458;
 
-/* ================= APP ================= */
+// Calcula distancia en kilómetros entre dos coordenadas
+function distancia_km(lat1, lon1, lat2, lon2) {
+    if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
+    const R = 6371; // radio Tierra en km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+// Helper para inicializar SQL.js y crear una DB a partir de un ArrayBuffer
+async function loadSqlDbFromBuffer(buffer) {
+    const SQL = await initSqlJs({
+        locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+    });
+    return new SQL.Database(new Uint8Array(buffer));
+}
+
 const SmartBinDashboard = () => {
     const [usuarios, setUsuarios] = useState([]);
     const [depositos, setDepositos] = useState([]);
@@ -43,285 +49,549 @@ const SmartBinDashboard = () => {
     const [binLevel, setBinLevel] = useState(0);
     const [puntosReciclaje, setPuntosReciclaje] = useState([]);
     const [puntoCercano, setPuntoCercano] = useState(null);
+    const [reciclajePuntos, setReciclajePuntos] = useState([]);
+    const [reciclajeColumns, setReciclajeColumns] = useState([]);
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
     const [apiUrl, setApiUrl] = useState('http://localhost:5000');
+    const [showLogs, setShowLogs] = useState(false);
 
     const addLog = msg => {
         const time = new Date().toLocaleString('es-ES');
         setLogs(prev => [...prev, `[${time}] ${msg}`]);
     };
 
-    /* ============ CARGAR DESDE API ============ */
+    // ---------- API ----------
     const loadFromAPI = async () => {
         setLoading(true);
-        addLog("Conectando con API...");
+        if (showLogs) addLog('Conectando con API...');
 
         try {
-            // Cargar resumen completo
             const resumenRes = await fetch(`${apiUrl}/api/resumen`);
-            if (!resumenRes.ok) throw new Error("Error al conectar con la API");
+            if (!resumenRes.ok) throw new Error('Error al conectar con la API');
             const resumen = await resumenRes.json();
-            
+
             setBinLevel(resumen.nivel_actual || 0);
             setPuntoCercano(resumen.punto_reciclaje_cercano);
-            addLog("✓ Resumen cargado");
+            if (showLogs) addLog('✓ Resumen cargado');
 
-            // Cargar usuarios
             const usuariosRes = await fetch(`${apiUrl}/api/usuarios`);
             const usuariosData = await usuariosRes.json();
             setUsuarios(usuariosData.usuarios || []);
-            addLog(`✓ ${usuariosData.usuarios?.length || 0} usuarios cargados`);
+            if (showLogs) addLog(`✓ ${usuariosData.usuarios?.length || 0} usuarios cargados`);
 
-            // Cargar depositos
             const depositosRes = await fetch(`${apiUrl}/api/depositos?limit=50`);
             const depositosData = await depositosRes.json();
             setDepositos(depositosData.depositos || []);
-            addLog(`✓ ${depositosData.depositos?.length || 0} depósitos cargados`);
+            if (showLogs) addLog(`✓ ${depositosData.depositos?.length || 0} depósitos cargados`);
 
-            // Cargar estadisticas
             const statsRes = await fetch(`${apiUrl}/api/estadisticas`);
             const statsData = await statsRes.json();
             setEstadisticas(statsData.estadisticas || []);
-            addLog("✓ Estadísticas cargadas");
+            if (showLogs) addLog('✓ Estadísticas cargadas');
 
-            // Cargar puntos de reciclaje
             const puntosRes = await fetch(`${apiUrl}/api/puntos-reciclaje?limit=5`);
             const puntosData = await puntosRes.json();
             setPuntosReciclaje(puntosData.puntos || []);
-            addLog(`✓ ${puntosData.puntos?.length || 0} puntos de reciclaje cargados`);
+            if (showLogs) addLog(`✓ ${puntosData.puntos?.length || 0} puntos de reciclaje cargados`);
 
-            addLog("✓ Datos cargados correctamente desde la API");
-
+            if (showLogs) addLog('✓ Datos cargados correctamente desde la API');
         } catch (e) {
             console.error(e);
             addLog(`❌ Error al cargar desde API: ${e.message}`);
-            addLog("⚠ Verifica que el servidor API esté ejecutándose en " + apiUrl);
+            addLog('⚠ Verifica que el servidor API esté ejecutándose en ' + apiUrl);
         } finally {
             setLoading(false);
         }
     };
 
-    /* ============ CARGAR BD LOCAL (FALLBACK) ============ */
-    const loadDatabaseFromFile = async (file) => {
-        setLoading(true);
-        addLog("Cargando base de datos local...");
-
-        try {
-            const buffer = await file.arrayBuffer();
-            const SQL = await initSqlJs({
-                locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
-            });
-
-            const db = new SQL.Database(new Uint8Array(buffer));
-            processDatabase(db);
-            addLog("✓ Base de datos importada correctamente");
-
-        } catch (e) {
-            console.error(e);
-            addLog("❌ Error al cargar la base de datos");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    /* ============ PROCESAR BD LOCAL ============ */
+    // ---------- Procesamiento DB ----------
     const processDatabase = (db) => {
-        /* ---- USUARIOS ---- */
+        // usuarios
         try {
-            const res = db.exec("SELECT * FROM usuarios");
-            const users = res[0].values.map(r => ({
-                uid: r[0],
-                nombre: r[1],
-                fecha_registro: r[2]
-            }));
-            setUsuarios(users);
-            addLog(`✓ ${users.length} usuarios cargados`);
-        } catch {
-            addLog("⚠ Tabla usuarios no encontrada");
-        }
-
-        /* ---- DEPOSITOS ---- */
-        try {
-            const res = db.exec("SELECT * FROM depositos");
-            const deps = res[0].values.map(r => ({
-                id: r[0],
-                uid: r[1],
-                porcentaje: r[2],
-                kg: r[3],
-                nivel: r[4],
-                fecha: r[5]
-            }));
-            setDepositos(deps);
-            addLog(`✓ ${deps.length} depósitos cargados`);
-
-            if (deps.length > 0) {
-                setBinLevel(deps[deps.length - 1].nivel);
+            const res = db.exec('SELECT * FROM usuarios');
+            if (res && res[0]) {
+                const users = res[0].values.map(r => ({ uid: r[0], nombre: r[1], fecha_registro: r[2] }));
+                setUsuarios(users);
+                addLog(`✓ ${users.length} usuarios cargados`);
             }
         } catch {
-            addLog("⚠ Tabla depositos no encontrada");
+            addLog('⚠ Tabla usuarios no encontrada');
         }
 
-        /* ---- ESTADISTICAS ---- */
+        // depositos
         try {
-            const res = db.exec("SELECT * FROM estadisticas");
-            const stats = res[0].values.map(r => ({
-                uid: r[0],
-                depositos: r[1],
-                kg: r[2],
-                fecha: r[3]
-            }));
-            setEstadisticas(stats);
-            addLog("✓ Estadísticas cargadas");
+            const res = db.exec('SELECT * FROM depositos');
+            if (res && res[0]) {
+                const deps = res[0].values.map(r => ({ id: r[0], uid: r[1], porcentaje: r[2], kg: r[3], nivel: r[4], fecha: r[5] }));
+                setDepositos(deps);
+                addLog(`✓ ${deps.length} depósitos cargados`);
+                if (deps.length > 0) setBinLevel(deps[deps.length - 1].nivel);
+            }
         } catch {
-            addLog("⚠ Tabla estadisticas no encontrada");
+            addLog('⚠ Tabla depositos no encontrada');
+        }
+
+        // estadisticas
+        try {
+            const res = db.exec('SELECT * FROM estadisticas');
+            if (res && res[0]) {
+                const stats = res[0].values.map(r => ({ uid: r[0], depositos: r[1], kg: r[2], fecha: r[3] }));
+                setEstadisticas(stats);
+                if (showLogs) addLog('✓ Estadísticas cargadas');
+            }
+        } catch {
+            if (showLogs) addLog('⚠ Tabla estadisticas no encontrada');
+        }
+
+        // puntos_reciclaje
+        try {
+            const res = db.exec('SELECT nombre, direccion, municipio, lat, lon FROM puntos_reciclaje');
+            if (res && res[0] && res[0].values) {
+                const pts = res[0].values
+                    .map(r => ({ nombre: r[0], direccion: r[1], municipio: r[2], lat: r[3], lon: r[4], distancia_km: distancia_km(LAT_PAPELERA, LON_PAPELERA, r[3], r[4]) }))
+                    .map(p => ({ ...p, distancia_km: p.distancia_km !== null ? Number(p.distancia_km.toFixed(2)) : null }));
+                pts.sort((a, b) => (a.distancia_km || 1e9) - (b.distancia_km || 1e9));
+                setPuntosReciclaje(pts);
+                if (pts.length > 0) setPuntoCercano(pts[0]);
+                if (showLogs) addLog(`✓ ${pts.length} puntos de reciclaje cargados desde DB`);
+            } else if (showLogs) {
+                addLog('⚠ Tabla puntos_reciclaje no encontrada');
+            }
+        } catch (e) {
+            if (showLogs) addLog('⚠ Error al leer puntos_reciclaje: ' + e.message);
         }
     };
 
+    // ---------- Carga desde archivos ----------
+    const loadDatabaseFromFile = async (file) => {
+        setLoading(true);
+        try {
+            const buffer = await file.arrayBuffer();
+            const db = await loadSqlDbFromBuffer(buffer);
+            processDatabase(db);
+            if (showLogs) addLog('✓ Base de datos importada correctamente');
+        } catch (e) {
+            console.error(e);
+            addLog('❌ Error al cargar la base de datos');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const loadReciclajeFromFile = async (file) => {
+        setLoading(true);
+        if (showLogs) addLog('Cargando BD reciclaje desde archivo local...');
+        try {
+            const buffer = await file.arrayBuffer();
+            const db = await loadSqlDbFromBuffer(buffer);
+
+            try {
+                const res = db.exec('SELECT * FROM puntos_reciclaje');
+                if (res && res[0] && res[0].values) {
+                    const cols = res[0].columns || [];
+                    setReciclajeColumns(cols);
+                    const latIdx = cols.indexOf('lat');
+                    const lonIdx = cols.indexOf('lon');
+                    const pts = res[0].values
+                        .map(row => {
+                            const obj = {};
+                            cols.forEach((c, i) => (obj[c] = row[i]));
+                            if (latIdx !== -1 && lonIdx !== -1 && obj[cols[latIdx]] != null && obj[cols[lonIdx]] != null) {
+                                const lat = Number(obj[cols[latIdx]]);
+                                const lon = Number(obj[cols[lonIdx]]);
+                                obj.distancia_km = distancia_km(LAT_PAPELERA, LON_PAPELERA, lat, lon);
+                            } else {
+                                obj.distancia_km = null;
+                            }
+                            return obj;
+                        })
+                        .map(p => ({ ...p, distancia_km: p.distancia_km !== null ? Number(p.distancia_km.toFixed(2)) : null }));
+
+                    setReciclajePuntos(pts);
+                    addLog(`✓ ${pts.length} puntos de reciclaje cargados desde archivo local`);
+                } else {
+                    setReciclajePuntos([]);
+                    setReciclajeColumns([]);
+                    addLog('⚠ Tabla puntos_reciclaje no encontrada en archivo local');
+                }
+            } catch (e) {
+                setReciclajeColumns([]);
+                addLog('⚠ Error al leer puntos_reciclaje del archivo: ' + e.message);
+            }
+        } catch (e) {
+            addLog('❌ Error al cargar archivo local: ' + e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ---------- Carga desde URL ----------
+    const loadDatabaseFromUrl = async (url) => {
+        setLoading(true);
+        if (showLogs) addLog(`Descargando ${url}...`);
+        try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const buffer = await res.arrayBuffer();
+            const db = await loadSqlDbFromBuffer(buffer);
+
+            if (url.toLowerCase().includes('reciclaje')) {
+                try {
+                    const r = db.exec('SELECT * FROM puntos_reciclaje');
+                    if (r && r[0] && r[0].values) {
+                        const cols = r[0].columns || [];
+                        setReciclajeColumns(cols);
+                        const latIdx = cols.indexOf('lat');
+                        const lonIdx = cols.indexOf('lon');
+                        const pts = r[0].values
+                            .map(row => {
+                                const obj = {};
+                                cols.forEach((c, i) => (obj[c] = row[i]));
+                                if (latIdx !== -1 && lonIdx !== -1 && obj[cols[latIdx]] != null && obj[cols[lonIdx]] != null) {
+                                    obj.distancia_km = distancia_km(LAT_PAPELERA, LON_PAPELERA, Number(obj[cols[latIdx]]), Number(obj[cols[lonIdx]]));
+                                } else {
+                                    obj.distancia_km = null;
+                                }
+                                return obj;
+                            })
+                            .map(p => ({ ...p, distancia_km: p.distancia_km !== null ? Number(p.distancia_km.toFixed(2)) : null }));
+
+                        setReciclajePuntos(pts);
+                        addLog(`✓ ${pts.length} puntos de reciclaje cargados desde ${url}`);
+                    } else {
+                        setReciclajePuntos([]);
+                        setReciclajeColumns([]);
+                        addLog('⚠ Tabla puntos_reciclaje no encontrada en la BD remota');
+                    }
+                } catch (e) {
+                    setReciclajeColumns([]);
+                    addLog(`❌ Error al procesar reciclaje.db: ${e.message}`);
+                }
+            } else {
+                processDatabase(db);
+                addLog(`✓ Base de datos cargada desde ${url}`);
+            }
+        } catch (e) {
+            addLog(`❌ Error al descargar ${url}: ${e.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ---------- Helpers de UI ----------
     const openFile = () => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".db,.sqlite,.sqlite3";
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.db,.sqlite,.sqlite3';
         input.onchange = e => loadDatabaseFromFile(e.target.files[0]);
         input.click();
     };
 
-    /* ============ CARGAR AL INICIAR ============ */
+    const openReciclajeFile = () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.db,.sqlite,.sqlite3';
+        input.onchange = e => loadReciclajeFromFile(e.target.files[0]);
+        input.click();
+    };
+
     useEffect(() => {
         loadFromAPI();
-    }, [apiUrl]);
+    }, []);
 
-    /* ============ TOTALES ============ */
-    const totalKg = estadisticas.reduce((s, e) => s + (e.kg_total || 0), 0);
-    const totalDepositos = estadisticas.reduce((s, e) => s + (e.total_depositos || 0), 0);
+    // Totales simples (soportando distintas estructuras de la API/BD)
+    const totalKg = estadisticas.reduce((s, e) => s + (Number(e.kg_total ?? e.kg ?? 0) || 0), 0);
+    const totalDepositos = estadisticas.reduce((s, e) => s + (Number(e.total_depositos ?? e.depositos ?? 0) || 0), 0);
 
     return (
-        <div className="min-h-screen bg-gray-100 p-6">
-            <h1 className="text-3xl font-bold mb-4">♻️ Papelera Inteligente</h1>
-
-            <div className="mb-4 flex gap-2 flex-wrap">
-                <button
-                    onClick={loadFromAPI}
-                    disabled={loading}
-                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
-                >
-                    {loading ? "Cargando..." : "🔄 Actualizar desde API"}
-                </button>
-                <button
-                    onClick={openFile}
-                    disabled={loading}
-                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                    📁 Cargar BD Local
-                </button>
-                <input
-                    type="text"
-                    value={apiUrl}
-                    onChange={e => setApiUrl(e.target.value)}
-                    placeholder="URL de la API"
-                    className="border px-3 py-2 rounded"
-                    style={{minWidth: '200px'}}
-                />
+        <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 p-6">
+            {/* HEADER */}
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h1 className="text-4xl font-bold text-green-700 mb-2">♻️ Sistema de Papelera Inteligente</h1>
+                <p className="text-gray-600">Dashboard completo de monitoreo y gestión</p>
             </div>
 
-            {/* LOG */}
-            <div className="bg-black text-green-400 p-3 rounded mb-4 text-sm max-h-40 overflow-y-auto">
-                {logs.map((l, i) => <div key={i}>{l}</div>)}
+            {/* CONTROLES */}
+            <div className="bg-white rounded-lg shadow p-4 mb-6">
+                <h2 className="font-bold text-lg mb-3">⚙️ Controles</h2>
+                <div className="flex gap-2 flex-wrap mb-4">
+                    <button
+                        onClick={loadFromAPI}
+                        disabled={loading}
+                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 transition"
+                    >
+                        {loading ? '⏳ Cargando...' : '🔄 Actualizar desde API'}
+                    </button>
+                    <button
+                        onClick={openFile}
+                        disabled={loading}
+                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 transition"
+                    >
+                        📁 Cargar BD Principal
+                    </button>
+                    <button
+                        onClick={openReciclajeFile}
+                        disabled={loading}
+                        className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:opacity-50 transition"
+                    >
+                        📁 Cargar BD Reciclaje (Local)
+                    </button>
+                    <button
+                        onClick={() => loadDatabaseFromUrl(`${apiUrl.replace(/\/$/, '')}/db/reciclaje.db`)}
+                        disabled={loading}
+                        className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 disabled:opacity-50 transition"
+                    >
+                        📡 Cargar BD Reciclaje (Servidor)
+                    </button>
+                </div>
+                <div className="flex gap-2 items-center">
+                    <label className="text-sm font-medium text-gray-700">URL API:</label>
+                    <input
+                        type="text"
+                        value={apiUrl}
+                        onChange={e => setApiUrl(e.target.value)}
+                        placeholder="http://localhost:5000"
+                        className="border border-gray-300 px-3 py-2 rounded flex-1 max-w-md"
+                    />
+                </div>
             </div>
 
-            {/* RESUMEN */}
-            <div className="grid grid-cols-4 gap-4 mb-6">
-                <div className="bg-white p-4 rounded shadow">Nivel: <b>{binLevel}%</b></div>
-                <div className="bg-white p-4 rounded shadow">Usuarios: <b>{usuarios.length}</b></div>
-                <div className="bg-white p-4 rounded shadow">Depósitos: <b>{totalDepositos}</b></div>
-                <div className="bg-white p-4 rounded shadow">Kg: <b>{totalKg.toFixed(2)}</b></div>
+            {/* TARJETAS DE RESUMEN */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="text-sm opacity-90 mb-1">Nivel de Llenado</div>
+                    <div className="text-3xl font-bold">{binLevel}%</div>
+                    <div className="mt-2 bg-white bg-opacity-30 rounded-full h-2">
+                        <div className="bg-white h-2 rounded-full transition-all" style={{width: `${binLevel}%`}}></div>
+                    </div>
+                </div>
+                <div className="bg-gradient-to-br from-green-500 to-green-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="text-sm opacity-90 mb-1">Usuarios Registrados</div>
+                    <div className="text-3xl font-bold">{usuarios.length}</div>
+                    <div className="text-xs mt-2 opacity-80">👥 Activos en el sistema</div>
+                </div>
+                <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="text-sm opacity-90 mb-1">Total Depósitos</div>
+                    <div className="text-3xl font-bold">{totalDepositos}</div>
+                    <div className="text-xs mt-2 opacity-80">📦 Registros totales</div>
+                </div>
+                <div className="bg-gradient-to-br from-orange-500 to-orange-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="text-sm opacity-90 mb-1">Kilogramos Totales</div>
+                    <div className="text-3xl font-bold">{totalKg.toFixed(2)}</div>
+                    <div className="text-xs mt-2 opacity-80">⚖️ kg reciclados</div>
+                </div>
             </div>
 
-            {/* USUARIOS */}
-            <div className="bg-white p-4 rounded shadow mb-6">
-                <h2 className="font-bold mb-2">Usuarios</h2>
-                <table className="w-full text-sm">
-                    <thead>
-                        <tr><th>UID</th><th>Nombre</th></tr>
-                    </thead>
-                    <tbody>
-                        {usuarios.map(u => (
-                            <tr key={u.uid}>
-                                <td>{u.uid}</td>
-                                <td>{u.nombre}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            {/* DEPOSITOS */}
-            <div className="bg-white p-4 rounded shadow mb-6">
-                <h2 className="font-bold mb-2">Últimos depósitos</h2>
-                <table className="w-full text-sm">
-                    <thead>
-                        <tr>
-                            <th>Usuario</th>
-                            <th>Kg</th>
-                            <th>Nivel</th>
-                            <th>Fecha</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {depositos.slice(0, 10).map(d => (
-                            <tr key={d.id}>
-                                <td>{d.nombre || d.uid}</td>
-                                <td>{d.kg?.toFixed(2) || d.kg}</td>
-                                <td>{d.nivel}%</td>
-                                <td>{new Date(d.fecha).toLocaleString('es-ES')}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            {/* PUNTO DE RECICLAJE MAS CERCANO */}
+            {/* PUNTO DE RECICLAJE MÁS CERCANO */}
             {puntoCercano && (
-                <div className="bg-green-50 border-2 border-green-500 p-4 rounded shadow mb-6">
-                    <h2 className="font-bold mb-2 text-green-800">📍 Punto de Reciclaje Más Cercano</h2>
-                    <div className="text-sm">
-                        <p><strong>Nombre:</strong> {puntoCercano.nombre}</p>
-                        <p><strong>Dirección:</strong> {puntoCercano.direccion}</p>
-                        <p><strong>Municipio:</strong> {puntoCercano.municipio}</p>
-                        <p><strong>Distancia:</strong> {puntoCercano.distancia_km} km</p>
+                <div className="bg-gradient-to-r from-green-100 to-emerald-100 border-2 border-green-500 p-6 rounded-lg shadow-lg mb-6">
+                    <h2 className="font-bold text-xl mb-3 text-green-800">📍 Punto de Reciclaje Más Cercano</h2>
+                    <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                            <p className="text-sm text-gray-600">Nombre</p>
+                            <p className="font-semibold text-lg">{puntoCercano.nombre}</p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-600">Distancia</p>
+                            <p className="font-semibold text-lg text-green-700">{puntoCercano.distancia_km} km</p>
+                        </div>
+                        <div className="md:col-span-2">
+                            <p className="text-sm text-gray-600">Dirección</p>
+                            <p className="font-semibold">{puntoCercano.direccion}</p>
+                            <p className="text-sm text-gray-700">{puntoCercano.municipio}</p>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* PUNTOS DE RECICLAJE */}
-            {puntosReciclaje.length > 0 && (
-                <div className="bg-white p-4 rounded shadow">
-                    <h2 className="font-bold mb-2">🗺️ Puntos de Reciclaje Cercanos</h2>
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr>
-                                <th>Nombre</th>
-                                <th>Dirección</th>
-                                <th>Distancia</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {puntosReciclaje.map((p, i) => (
-                                <tr key={i}>
-                                    <td>{p.nombre}</td>
-                                    <td>{p.direccion}</td>
-                                    <td>{p.distancia_km} km</td>
+            {/* USUARIOS */}
+            <div className="bg-white p-6 rounded-lg shadow-lg mb-6">
+                <h2 className="font-bold text-xl mb-4 text-gray-800">👥 Usuarios Registrados</h2>
+                {usuarios.length === 0 ? (
+                    <p className="text-gray-500 text-center py-4">No hay usuarios cargados</p>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-gray-100">
+                                <tr>
+                                    <th className="px-4 py-2 text-left font-semibold">UID</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Nombre</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Fecha Registro</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {usuarios.map((u, i) => (
+                                    <tr key={u.uid} className={i % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                                        <td className="px-4 py-2 font-mono text-xs">{u.uid}</td>
+                                        <td className="px-4 py-2 font-medium">{u.nombre}</td>
+                                        <td className="px-4 py-2 text-gray-600">{u.fecha_registro}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+
+            {/* DEPÓSITOS */}
+            <div className="bg-white p-6 rounded-lg shadow-lg mb-6">
+                <h2 className="font-bold text-xl mb-4 text-gray-800">📦 Últimos Depósitos</h2>
+                {depositos.length === 0 ? (
+                    <p className="text-gray-500 text-center py-4">No hay depósitos registrados</p>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-gray-100">
+                                <tr>
+                                    <th className="px-4 py-2 text-left font-semibold">ID</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Usuario</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Kg</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Nivel</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Fecha</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {depositos.slice(0, 20).map((d, i) => (
+                                    <tr key={d.id} className={i % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                                        <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
+                                        <td className="px-4 py-2">{d.nombre || d.uid}</td>
+                                        <td className="px-4 py-2 font-semibold text-green-600">
+                                            {d.kg ? Number(d.kg).toFixed(2) : '0.00'} kg
+                                        </td>
+                                        <td className="px-4 py-2">
+                                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                                {d.nivel}%
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-2 text-gray-600 text-xs">
+                                            {d.fecha ? new Date(d.fecha).toLocaleString('es-ES') : '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+
+            {/* PUNTOS DE RECICLAJE CERCANOS */}
+            {puntosReciclaje.length > 0 && (
+                <div className="bg-white p-6 rounded-lg shadow-lg mb-6">
+                    <h2 className="font-bold text-xl mb-4 text-gray-800">🗺️ Puntos de Reciclaje Cercanos</h2>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-gray-100">
+                                <tr>
+                                    <th className="px-4 py-2 text-left font-semibold">Nombre</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Dirección</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Municipio</th>
+                                    <th className="px-4 py-2 text-left font-semibold">Distancia</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {puntosReciclaje.map((p, i) => (
+                                    <tr key={i} className={i % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                                        <td className="px-4 py-2 font-medium">{p.nombre}</td>
+                                        <td className="px-4 py-2 text-gray-600">{p.direccion}</td>
+                                        <td className="px-4 py-2 text-gray-600">{p.municipio}</td>
+                                        <td className="px-4 py-2 font-semibold text-green-600">
+                                            {p.distancia_km} km
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             )}
-        </div>
-    );
-};
 
+            {/* BASE DE DATOS RECICLAJE */}
+            <div className="bg-white p-6 rounded-lg shadow-lg">
+                <h2 className="font-bold text-xl mb-4 text-gray-800">📁 Base de Datos: Reciclaje - puntos_reciclaje</h2>
+                {reciclajePuntos.length === 0 ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-lg">
+                        <p className="text-gray-500 mb-4 text-lg">⚠️ No hay datos cargados</p>
+                        <p className="text-sm text-gray-600 mb-4">Utiliza uno de estos botones para cargar la base de datos:</p>
+                        <div className="flex gap-3 justify-center">
+                            <button
+                                onClick={openReciclajeFile}
+                                className="bg-emerald-600 text-white px-6 py-3 rounded-lg hover:bg-emerald-700 transition shadow"
+                            >
+                                📁 Cargar desde Archivo Local
+                            </button>
+                            <button
+                                onClick={() => loadDatabaseFromUrl(`${apiUrl.replace(/\/$/, '')}/db/reciclaje.db`)}
+                                className="bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 transition shadow"
+                            >
+                                📡 Cargar desde Servidor
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+    <div>
+        <div className="mb-3 flex justify-between items-center">
+            <p className="text-sm text-gray-600">
+                <span className="font-semibold text-green-600">{reciclajePuntos.length}</span> registros encontrados
+            </p>
+        </div>
+
+        <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse border border-gray-300">
+                <thead>
+                    <tr className="bg-gradient-to-r from-gray-100 to-gray-200">
+                        {reciclajeColumns && reciclajeColumns.length > 0 ? (
+                            reciclajeColumns.map((c, i) => (
+                                <th key={i} className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-700">{c}</th>
+                            ))
+                        ) : (
+                            <>
+                                <th className="border border-gray-300 px-3 py-2 text-left font-semibold">id</th>
+                                <th className="border border-gray-300 px-3 py-2 text-left font-semibold">nombre</th>
+                                <th className="border border-gray-300 px-3 py-2 text-left font-semibold">direccion</th>
+                                <th className="border border-gray-300 px-3 py-2 text-left font-semibold">municipio</th>
+                                <th className="border border-gray-300 px-3 py-2 text-left font-semibold">lat</th>
+                                <th className="border border-gray-300 px-3 py-2 text-left font-semibold">lon</th>
+                            </>
+                        )}
+
+                        <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-green-700">Distancia (km)</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {reciclajePuntos.map((p, i) => (
+                        <tr key={i} className={i % 2 === 0 ? 'bg-white hover:bg-gray-50' : 'bg-gray-50 hover:bg-gray-100'}>
+                            {reciclajeColumns && reciclajeColumns.length > 0 ? (
+                                reciclajeColumns.map((c, j) => (
+                                    <td key={j} className="border border-gray-300 px-3 py-2">
+                                        {p[c] != null ? (typeof p[c] === 'number' ? p[c].toFixed(6) : p[c]) : '—'}
+                                    </td>
+                                ))
+                            ) : (
+                                <>
+                                    <td className="border border-gray-300 px-3 py-2">{p.id || '—'}</td>
+                                    <td className="border border-gray-300 px-3 py-2 font-medium">{p.nombre || '—'}</td>
+                                    <td className="border border-gray-300 px-3 py-2">{p.direccion || '—'}</td>
+                                    <td className="border border-gray-300 px-3 py-2">{p.municipio || '—'}</td>
+                                    <td className="border border-gray-300 px-3 py-2 font-mono text-xs">{p.lat || '—'}</td>
+                                    <td className="border border-gray-300 px-3 py-2 font-mono text-xs">{p.lon || '—'}</td>
+                                </>
+                            )}
+
+                            <td className="border border-gray-300 px-3 py-2 font-semibold text-green-600">{p.distancia_km !== null ? `${p.distancia_km} km` : '—'}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    </div>
+)}
+</div>
+</div>
+);
+};
 ReactDOM.createRoot(document.getElementById("root")).render(<SmartBinDashboard />);
 </script>
 </body>
-</html>
+</html></parameter>
