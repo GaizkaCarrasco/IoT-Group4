@@ -187,13 +187,13 @@ class DatabaseManager:
         """
         Descarga puntos de reciclaje desde una API pública y los guarda en la BD.
         API usada (reciclaje / puntos limpios):
-        https://datos.madrid.es/egob/catalogo/212625-0-puntos-limpios.json
+        https://datos.madrid.es/egob/catalogo/200284-0-puntos-limpios-fijos.json
         """
         try:
             conn_reciclaje = sqlite3.connect(RECICLAJE_DB_FILE)
             cursor = conn_reciclaje.cursor()
             
-            url = "https://datos.madrid.es/egob/catalogo/212625-0-puntos-limpios.json"
+            url = "https://datos.madrid.es/egob/catalogo/200284-0-puntos-limpios-fijos.json"
             print("\n? Actualizando puntos de reciclaje desde API publica...")
             
             resp = requests.get(url, timeout=10)
